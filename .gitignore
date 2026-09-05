@@ -1,0 +1,5 @@
+node_modules/
+crisislink.db
+crisislink.db-shm
+crisislink.db-wal
+.env
