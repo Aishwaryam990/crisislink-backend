@@ -64,6 +64,23 @@ db.exec(`
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 `);
+// =====================================================
+// REGISTERED RESCUE TEAMS
+// =====================================================
+
+db.exec(`
+    CREATE TABLE IF NOT EXISTS rescue_teams (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        team_name TEXT NOT NULL,
+        district TEXT NOT NULL,
+        service_types TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        latitude REAL,
+        longitude REAL,
+        availability TEXT DEFAULT 'Available',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+`);
 
 // =====================================================
 // RESPONSE SERVICE DIRECTORY
@@ -1103,6 +1120,289 @@ app.get("/api/dashboard", (req, res) => {
             message:
                 "Failed to load dashboard"
 
+        });
+
+    }
+
+});
+// =====================================================
+// REGISTERED RESCUE TEAMS
+// =====================================================
+
+// REGISTER A RESCUE TEAM
+
+app.post("/api/rescue-teams", (req, res) => {
+
+    try {
+
+        const {
+            team_name,
+            district,
+            service_types,
+            phone,
+            latitude,
+            longitude,
+            availability
+        } = req.body;
+
+        if (
+            !team_name ||
+            !district ||
+            !service_types ||
+            !phone
+        ) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Team name, district, service types and phone are required"
+            });
+        }
+
+        const services = Array.isArray(service_types)
+            ? service_types
+            : [service_types];
+
+        const allowedAvailability = [
+            "Available",
+            "Busy",
+            "Offline"
+        ];
+
+        const finalAvailability =
+            allowedAvailability.includes(availability)
+                ? availability
+                : "Available";
+
+        const stmt = db.prepare(`
+            INSERT INTO rescue_teams (
+                team_name,
+                district,
+                service_types,
+                phone,
+                latitude,
+                longitude,
+                availability
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        const result = stmt.run(
+            team_name,
+            district,
+            JSON.stringify(services),
+            phone,
+            latitude !== undefined ? latitude : null,
+            longitude !== undefined ? longitude : null,
+            finalAvailability
+        );
+
+        res.status(201).json({
+            success: true,
+            message: "Rescue team registered successfully",
+            team_id: result.lastInsertRowid
+        });
+
+    } catch (error) {
+
+        console.error(error);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to register rescue team"
+        });
+
+    }
+
+});
+
+
+// GET REGISTERED RESCUE TEAMS
+
+app.get("/api/rescue-teams", (req, res) => {
+
+    try {
+
+        const {
+            district,
+            incident,
+            availability
+        } = req.query;
+
+        let teams = db.prepare(`
+            SELECT *
+            FROM rescue_teams
+            ORDER BY id DESC
+        `).all();
+
+        teams = teams.filter(team => {
+
+            if (
+                district &&
+                team.district.toLowerCase() !==
+                district.toLowerCase()
+            ) {
+                return false;
+            }
+
+            if (
+                availability &&
+                team.availability !== availability
+            ) {
+                return false;
+            }
+
+            if (incident) {
+
+                let services = [];
+
+                try {
+                    services = JSON.parse(team.service_types);
+                } catch {
+                    services = [];
+                }
+
+                const handlesIncident = services.some(
+                    service =>
+                        String(service).toLowerCase() ===
+                        String(incident).toLowerCase()
+                );
+
+                if (!handlesIncident) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+
+        teams.forEach(team => {
+
+            try {
+                team.service_types =
+                    JSON.parse(team.service_types);
+            } catch {
+                team.service_types = [];
+            }
+
+        });
+
+        res.json({
+            success: true,
+            count: teams.length,
+            teams
+        });
+
+    } catch (error) {
+
+        console.error(error);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to fetch rescue teams"
+        });
+
+    }
+
+});
+
+
+// UPDATE RESCUE TEAM AVAILABILITY
+
+app.patch("/api/rescue-teams/:id/status", (req, res) => {
+
+    try {
+
+        const { availability } = req.body;
+
+        const allowedAvailability = [
+            "Available",
+            "Busy",
+            "Offline"
+        ];
+
+        if (!allowedAvailability.includes(availability)) {
+
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Invalid availability. Use Available, Busy or Offline."
+            });
+
+        }
+
+        const result = db.prepare(`
+            UPDATE rescue_teams
+            SET availability = ?
+            WHERE id = ?
+        `).run(
+            availability,
+            req.params.id
+        );
+
+        if (result.changes === 0) {
+
+            return res.status(404).json({
+                success: false,
+                message: "Rescue team not found"
+            });
+
+        }
+
+        res.json({
+            success: true,
+            message: "Rescue team availability updated",
+            team_id: Number(req.params.id),
+            availability
+        });
+
+    } catch (error) {
+
+        console.error(error);
+
+        res.status(500).json({
+            success: false,
+            message:
+                "Failed to update rescue team availability"
+        });
+
+    }
+
+});
+
+
+// DELETE RESCUE TEAM
+
+app.delete("/api/rescue-teams/:id", (req, res) => {
+
+    try {
+
+        const result = db.prepare(`
+            DELETE FROM rescue_teams
+            WHERE id = ?
+        `).run(req.params.id);
+
+        if (result.changes === 0) {
+
+            return res.status(404).json({
+                success: false,
+                message: "Rescue team not found"
+            });
+
+        }
+
+        res.json({
+            success: true,
+            message: "Rescue team deleted successfully",
+            team_id: Number(req.params.id)
+        });
+
+    } catch (error) {
+
+        console.error(error);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to delete rescue team"
         });
 
     }
