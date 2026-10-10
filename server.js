@@ -1,86 +1,95 @@
 const express = require("express");
 const cors = require("cors");
 const Database = require("better-sqlite3");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// =====================================================
-// MIDDLEWARE
-// =====================================================
+const JWT_SECRET =
+    process.env.JWT_SECRET ||
+    "crisislink-jwt-secret-change-this-in-render";
+
+const ADMIN_EMAIL =
+    (process.env.ADMIN_EMAIL || "admin@crisislink.com").toLowerCase();
+
+const ADMIN_PASSWORD =
+    process.env.ADMIN_PASSWORD || "CrisisLink@123";
 
 app.use(cors());
 app.use(express.json());
-
-// =====================================================
-// DATABASE
-// =====================================================
 
 const db = new Database("crisislink.db");
 
 db.pragma("journal_mode = WAL");
 
-// =====================================================
-// TABLES
-// =====================================================
 
-db.exec(`
-    CREATE TABLE IF NOT EXISTS incidents (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        incident TEXT NOT NULL,
-        district TEXT NOT NULL,
-        priority TEXT DEFAULT 'Monitoring',
-        affected_people INTEGER DEFAULT 1,
-        latitude REAL,
-        longitude REAL,
-        response_team TEXT,
-        response_phone TEXT,
-        status TEXT DEFAULT 'Reported',
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS resource_requests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        district TEXT NOT NULL,
-        incident TEXT NOT NULL,
-        resources TEXT NOT NULL,
-        latitude REAL,
-        longitude REAL,
-        target_team TEXT,
-        target_phone TEXT,
-        status TEXT DEFAULT 'Requested',
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS sos_requests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        district TEXT NOT NULL,
-        incident TEXT NOT NULL,
-        latitude REAL,
-        longitude REAL,
-        response_team TEXT,
-        response_phone TEXT,
-        status TEXT DEFAULT 'SOS Active',
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-`);
 // =====================================================
-// REGISTERED RESCUE TEAMS
+// DATABASE TABLES
 // =====================================================
 
 db.exec(`
-    CREATE TABLE IF NOT EXISTS rescue_teams (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        team_name TEXT NOT NULL,
-        district TEXT NOT NULL,
-        service_types TEXT NOT NULL,
-        phone TEXT NOT NULL,
-        latitude REAL,
-        longitude REAL,
-        availability TEXT DEFAULT 'Available',
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
+CREATE TABLE IF NOT EXISTS incidents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    incident TEXT NOT NULL,
+    district TEXT NOT NULL,
+    priority TEXT DEFAULT 'Monitoring',
+    affected_people INTEGER DEFAULT 1,
+    latitude REAL,
+    longitude REAL,
+    response_team TEXT,
+    response_phone TEXT,
+    status TEXT DEFAULT 'Reported',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS resource_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    district TEXT NOT NULL,
+    incident TEXT NOT NULL,
+    resources TEXT NOT NULL,
+    latitude REAL,
+    longitude REAL,
+    target_team TEXT,
+    target_phone TEXT,
+    status TEXT DEFAULT 'Requested',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sos_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    district TEXT NOT NULL,
+    incident TEXT NOT NULL,
+    latitude REAL,
+    longitude REAL,
+    response_team TEXT,
+    response_phone TEXT,
+    status TEXT DEFAULT 'SOS Active',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS rescue_teams (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_name TEXT NOT NULL,
+    district TEXT NOT NULL,
+    service_types TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    latitude REAL,
+    longitude REAL,
+    availability TEXT DEFAULT 'Available',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS admins (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    name TEXT DEFAULT 'CrisisLink Administrator',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 `);
+
 
 // =====================================================
 // RESPONSE SERVICE DIRECTORY
@@ -115,8 +124,6 @@ const responseServices = {
     }
 };
 
-// Standard emergency services for districts
-// where a district-specific number has not been configured.
 
 const standardServices = {
     "Flood": {
@@ -145,6 +152,7 @@ const standardServices = {
     }
 };
 
+
 function getResponseService(district, incident) {
 
     if (
@@ -160,8 +168,91 @@ function getResponseService(district, incident) {
     };
 }
 
+
 // =====================================================
-// HEALTH CHECK
+// ADMIN ACCOUNT
+// =====================================================
+
+function ensureAdminAccount() {
+
+    const existingAdmin = db
+        .prepare("SELECT id FROM admins WHERE email = ?")
+        .get(ADMIN_EMAIL);
+
+    if (!existingAdmin) {
+
+        const passwordHash = bcrypt.hashSync(
+            ADMIN_PASSWORD,
+            12
+        );
+
+        db.prepare(`
+            INSERT INTO admins (
+                email,
+                password_hash,
+                name
+            )
+            VALUES (?, ?, ?)
+        `).run(
+            ADMIN_EMAIL,
+            passwordHash,
+            "CrisisLink Administrator"
+        );
+
+        console.log(
+            `Admin account created: ${ADMIN_EMAIL}`
+        );
+    }
+}
+
+ensureAdminAccount();
+
+
+// =====================================================
+// ADMIN AUTHENTICATION MIDDLEWARE
+// =====================================================
+
+function requireAdmin(req, res, next) {
+
+    const authorization =
+        req.headers.authorization || "";
+
+    if (!authorization.startsWith("Bearer ")) {
+
+        return res.status(401).json({
+            success: false,
+            message: "Admin authentication required"
+        });
+    }
+
+    const token =
+        authorization.slice(7);
+
+    try {
+
+        const decoded =
+            jwt.verify(token, JWT_SECRET);
+
+        if (decoded.role !== "admin") {
+            throw new Error("Invalid role");
+        }
+
+        req.admin = decoded;
+
+        next();
+
+    } catch (error) {
+
+        return res.status(401).json({
+            success: false,
+            message: "Invalid or expired admin token"
+        });
+    }
+}
+
+
+// =====================================================
+// HEALTH
 // =====================================================
 
 app.get("/", (req, res) => {
@@ -169,12 +260,13 @@ app.get("/", (req, res) => {
     res.json({
         success: true,
         message: "CrisisLink Backend is running",
-        version: "1.2.0",
+        version: "1.3.0",
         database: "SQLite",
+        authentication: "JWT + bcrypt",
         status: "online"
     });
-
 });
+
 
 app.get("/api/health", (req, res) => {
 
@@ -191,15 +283,115 @@ app.get("/api/health", (req, res) => {
 
     } catch (error) {
 
+        console.error(error);
+
         res.status(500).json({
             success: false,
             server: "online",
             database: "error"
         });
-
     }
-
 });
+
+
+// =====================================================
+// ADMIN LOGIN
+// =====================================================
+
+app.post("/api/auth/admin/login", (req, res) => {
+
+    try {
+
+        const email =
+            String(req.body.email || "")
+                .trim()
+                .toLowerCase();
+
+        const password =
+            String(req.body.password || "");
+
+        if (!email || !password) {
+
+            return res.status(400).json({
+                success: false,
+                message: "Email and password are required"
+            });
+        }
+
+        const admin = db
+            .prepare(
+                "SELECT * FROM admins WHERE email = ?"
+            )
+            .get(email);
+
+        if (
+            !admin ||
+            !bcrypt.compareSync(
+                password,
+                admin.password_hash
+            )
+        ) {
+
+            return res.status(401).json({
+                success: false,
+                message: "Invalid admin email or password"
+            });
+        }
+
+        const token = jwt.sign(
+            {
+                id: admin.id,
+                email: admin.email,
+                name: admin.name,
+                role: "admin"
+            },
+            JWT_SECRET,
+            {
+                expiresIn: "8h"
+            }
+        );
+
+        res.json({
+            success: true,
+            message: "Admin login successful",
+            token,
+
+            admin: {
+                id: admin.id,
+                email: admin.email,
+                name: admin.name,
+                role: "admin"
+            }
+        });
+
+    } catch (error) {
+
+        console.error(error);
+
+        res.status(500).json({
+            success: false,
+            message: "Admin login failed"
+        });
+    }
+});
+
+
+// =====================================================
+// CHECK ADMIN SESSION
+// =====================================================
+
+app.get(
+    "/api/auth/admin/me",
+    requireAdmin,
+    (req, res) => {
+
+        res.json({
+            success: true,
+            admin: req.admin
+        });
+    }
+);
+
 
 // =====================================================
 // RESPONSE SERVICE
@@ -209,22 +401,25 @@ app.get("/api/response-service", (req, res) => {
 
     try {
 
-        const district = req.query.district;
-        const incident = req.query.incident;
+        const {
+            district,
+            incident
+        } = req.query;
 
         if (!district || !incident) {
 
             return res.status(400).json({
                 success: false,
-                message: "District and incident are required"
+                message:
+                    "District and incident are required"
             });
-
         }
 
-        const service = getResponseService(
-            district,
-            incident
-        );
+        const service =
+            getResponseService(
+                district,
+                incident
+            );
 
         res.json({
             success: true,
@@ -240,18 +435,19 @@ app.get("/api/response-service", (req, res) => {
 
         res.status(500).json({
             success: false,
-            message: "Failed to find response service"
+            message:
+                "Failed to find response service"
         });
-
     }
-
 });
+
 
 // =====================================================
 // INCIDENTS
 // =====================================================
 
 // CREATE INCIDENT
+// User can submit incidents.
 
 app.post("/api/incidents", (req, res) => {
 
@@ -272,15 +468,16 @@ app.post("/api/incidents", (req, res) => {
 
             return res.status(400).json({
                 success: false,
-                message: "Incident and district are required"
+                message:
+                    "Incident and district are required"
             });
-
         }
 
-        const service = getResponseService(
-            district,
-            incident
-        );
+        const service =
+            getResponseService(
+                district,
+                incident
+            );
 
         const finalTeam =
             response_team || service.team;
@@ -288,7 +485,7 @@ app.post("/api/incidents", (req, res) => {
         const finalPhone =
             response_phone || service.phone;
 
-        const stmt = db.prepare(`
+        const result = db.prepare(`
             INSERT INTO incidents (
                 incident,
                 district,
@@ -300,9 +497,7 @@ app.post("/api/incidents", (req, res) => {
                 response_phone
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-
-        const result = stmt.run(
+        `).run(
 
             incident,
 
@@ -323,21 +518,23 @@ app.post("/api/incidents", (req, res) => {
             finalTeam,
 
             finalPhone
-
         );
 
         res.status(201).json({
 
             success: true,
 
-            message: "Incident submitted successfully",
+            message:
+                "Incident submitted successfully",
 
-            incident_id: result.lastInsertRowid,
+            incident_id:
+                result.lastInsertRowid,
 
-            response_team: finalTeam,
+            response_team:
+                finalTeam,
 
-            response_phone: finalPhone
-
+            response_phone:
+                finalPhone
         });
 
     } catch (error) {
@@ -346,71 +543,75 @@ app.post("/api/incidents", (req, res) => {
 
         res.status(500).json({
             success: false,
-            message: "Failed to submit incident"
+            message:
+                "Failed to submit incident"
         });
-
     }
-
 });
 
-// =====================================================
+
+// ADMIN ONLY
 // GET ALL INCIDENTS
-// =====================================================
 
-app.get("/api/incidents", (req, res) => {
+app.get(
+    "/api/incidents",
+    requireAdmin,
+    (req, res) => {
 
-    try {
+        try {
 
-        const incidents = db.prepare(`
-            SELECT *
-            FROM incidents
-            ORDER BY id DESC
-        `).all();
+            const incidents =
+                db.prepare(`
+                    SELECT *
+                    FROM incidents
+                    ORDER BY id DESC
+                `).all();
 
-        res.json({
+            res.json({
 
-            success: true,
+                success: true,
 
-            count: incidents.length,
+                count:
+                    incidents.length,
 
-            incidents
+                incidents
+            });
 
-        });
+        } catch (error) {
 
-    } catch (error) {
+            console.error(error);
 
-        console.error(error);
-
-        res.status(500).json({
-            success: false,
-            message: "Failed to fetch incidents"
-        });
-
+            res.status(500).json({
+                success: false,
+                message:
+                    "Failed to fetch incidents"
+            });
+        }
     }
+);
 
-});
 
-// =====================================================
 // GET SINGLE INCIDENT
-// =====================================================
+// Kept available so the user can check a submitted incident.
 
 app.get("/api/incidents/:id", (req, res) => {
 
     try {
 
-        const incident = db.prepare(`
-            SELECT *
-            FROM incidents
-            WHERE id = ?
-        `).get(req.params.id);
+        const incident =
+            db.prepare(`
+                SELECT *
+                FROM incidents
+                WHERE id = ?
+            `).get(req.params.id);
 
         if (!incident) {
 
             return res.status(404).json({
                 success: false,
-                message: "Incident not found"
+                message:
+                    "Incident not found"
             });
-
         }
 
         res.json({
@@ -424,128 +625,148 @@ app.get("/api/incidents/:id", (req, res) => {
 
         res.status(500).json({
             success: false,
-            message: "Failed to fetch incident"
+            message:
+                "Failed to fetch incident"
         });
-
     }
-
 });
 
-// =====================================================
+
+// ADMIN ONLY
 // UPDATE INCIDENT STATUS
-// =====================================================
 
-app.patch("/api/incidents/:id/status", (req, res) => {
+app.patch(
+    "/api/incidents/:id/status",
+    requireAdmin,
+    (req, res) => {
 
-    try {
+        try {
 
-        const { status } = req.body;
+            const {
+                status
+            } = req.body;
 
-        const allowedStatuses = [
-            "Reported",
-            "Monitoring",
-            "Warning",
-            "Crisis",
-            "Resolved"
-        ];
+            const allowedStatuses = [
+                "Reported",
+                "Monitoring",
+                "Warning",
+                "Crisis",
+                "Resolved"
+            ];
 
-        if (!allowedStatuses.includes(status)) {
+            if (!allowedStatuses.includes(status)) {
 
-            return res.status(400).json({
+                return res.status(400).json({
 
-                success: false,
+                    success: false,
+
+                    message:
+                        "Invalid status. Use Reported, Monitoring, Warning, Crisis or Resolved."
+                });
+            }
+
+            const result =
+                db.prepare(`
+                    UPDATE incidents
+                    SET status = ?
+                    WHERE id = ?
+                `).run(
+                    status,
+                    req.params.id
+                );
+
+            if (result.changes === 0) {
+
+                return res.status(404).json({
+                    success: false,
+                    message:
+                        "Incident not found"
+                });
+            }
+
+            res.json({
+
+                success: true,
 
                 message:
-                    "Invalid status. Use Reported, Monitoring, Warning, Crisis or Resolved."
+                    "Incident status updated",
 
+                incident_id:
+                    Number(req.params.id),
+
+                status
             });
 
-        }
+        } catch (error) {
 
-        const result = db.prepare(`
-            UPDATE incidents
-            SET status = ?
-            WHERE id = ?
-        `).run(
-            status,
-            req.params.id
-        );
+            console.error(error);
 
-        if (result.changes === 0) {
-
-            return res.status(404).json({
+            res.status(500).json({
                 success: false,
-                message: "Incident not found"
+                message:
+                    "Failed to update incident status"
             });
-
         }
-
-        res.json({
-
-            success: true,
-
-            message: "Incident status updated",
-
-            incident_id: Number(req.params.id),
-
-            status
-
-        });
-
-    } catch (error) {
-
-        console.error(error);
-
-        res.status(500).json({
-            success: false,
-            message: "Failed to update incident status"
-        });
-
     }
+);
 
-});
 
-// =====================================================
+// ADMIN ONLY
 // DELETE INCIDENT
-// =====================================================
 
-// Delete incident
-app.delete("/api/incidents/:id", (req, res) => {
-    try {
-        const { id } = req.params;
+app.delete(
+    "/api/incidents/:id",
+    requireAdmin,
+    (req, res) => {
 
-        const result = db.prepare(`
-            DELETE FROM incidents
-            WHERE id = ?
-        `).run(id);
+        try {
 
-        if (result.changes === 0) {
-            return res.status(404).json({
+            const result =
+                db.prepare(`
+                    DELETE FROM incidents
+                    WHERE id = ?
+                `).run(req.params.id);
+
+            if (result.changes === 0) {
+
+                return res.status(404).json({
+                    success: false,
+                    message:
+                        "Incident not found"
+                });
+            }
+
+            res.json({
+
+                success: true,
+
+                message:
+                    "Incident deleted successfully",
+
+                incident_id:
+                    Number(req.params.id)
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            res.status(500).json({
                 success: false,
-                message: "Incident not found"
+                message:
+                    "Failed to delete incident"
             });
         }
-
-        res.json({
-            success: true,
-            message: "Incident deleted successfully",
-            incident_id: Number(id)
-        });
-
-    } catch (error) {
-        console.error(error);
-
-        res.status(500).json({
-            success: false,
-            message: "Failed to delete incident"
-        });
     }
-});
+);
+
+
 // =====================================================
 // RESOURCE REQUESTS
 // =====================================================
 
 // CREATE RESOURCE REQUEST
+// User can submit resource requests.
 
 app.post("/api/resources", (req, res) => {
 
@@ -573,15 +794,14 @@ app.post("/api/resources", (req, res) => {
 
                 message:
                     "District, incident and resources are required"
-
             });
-
         }
 
-        const service = getResponseService(
-            district,
-            incident
-        );
+        const service =
+            getResponseService(
+                district,
+                incident
+            );
 
         const finalTeam =
             target_team || service.team;
@@ -594,7 +814,7 @@ app.post("/api/resources", (req, res) => {
                 ? resources
                 : [resources];
 
-        const stmt = db.prepare(`
+        const result = db.prepare(`
             INSERT INTO resource_requests (
                 district,
                 incident,
@@ -605,15 +825,15 @@ app.post("/api/resources", (req, res) => {
                 target_phone
             )
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        `);
-
-        const result = stmt.run(
+        `).run(
 
             district,
 
             incident,
 
-            JSON.stringify(resourcesData),
+            JSON.stringify(
+                resourcesData
+            ),
 
             latitude !== undefined
                 ? latitude
@@ -626,7 +846,6 @@ app.post("/api/resources", (req, res) => {
             finalTeam,
 
             finalPhone
-
         );
 
         res.status(201).json({
@@ -644,7 +863,6 @@ app.post("/api/resources", (req, res) => {
 
             target_phone:
                 finalPhone
-
         });
 
     } catch (error) {
@@ -657,154 +875,162 @@ app.post("/api/resources", (req, res) => {
 
             message:
                 "Failed to submit resource request"
-
         });
-
     }
-
 });
 
-// =====================================================
+
+// ADMIN ONLY
 // GET RESOURCE REQUESTS
-// =====================================================
 
-app.get("/api/resources", (req, res) => {
+app.get(
+    "/api/resources",
+    requireAdmin,
+    (req, res) => {
 
-    try {
+        try {
 
-        const requests = db.prepare(`
-            SELECT *
-            FROM resource_requests
-            ORDER BY id DESC
-        `).all();
+            const requests =
+                db.prepare(`
+                    SELECT *
+                    FROM resource_requests
+                    ORDER BY id DESC
+                `).all();
 
-        requests.forEach(request => {
+            requests.forEach(
+                request => {
 
-            try {
+                    try {
 
-                request.resources =
-                    JSON.parse(request.resources);
+                        request.resources =
+                            JSON.parse(
+                                request.resources
+                            );
 
-            } catch {
+                    } catch {
+                        // Keep original value.
+                    }
+                }
+            );
 
-                // Keep original value
+            res.json({
 
+                success: true,
+
+                count:
+                    requests.length,
+
+                requests
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            res.status(500).json({
+
+                success: false,
+
+                message:
+                    "Failed to fetch resource requests"
+            });
+        }
+    }
+);
+
+
+// ADMIN ONLY
+// UPDATE RESOURCE STATUS
+
+app.patch(
+    "/api/resources/:id/status",
+    requireAdmin,
+    (req, res) => {
+
+        try {
+
+            const {
+                status
+            } = req.body;
+
+            const allowedStatuses = [
+                "Requested",
+                "Assigned",
+                "In Progress",
+                "Delivered",
+                "Completed",
+                "Cancelled"
+            ];
+
+            if (
+                !allowedStatuses.includes(status)
+            ) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    message:
+                        "Invalid resource request status"
+                });
             }
 
-        });
+            const result =
+                db.prepare(`
+                    UPDATE resource_requests
+                    SET status = ?
+                    WHERE id = ?
+                `).run(
+                    status,
+                    req.params.id
+                );
 
-        res.json({
+            if (result.changes === 0) {
 
-            success: true,
+                return res.status(404).json({
 
-            count: requests.length,
+                    success: false,
 
-            requests
+                    message:
+                        "Resource request not found"
+                });
+            }
 
-        });
+            res.json({
 
-    } catch (error) {
+                success: true,
 
-        console.error(error);
+                message:
+                    "Resource request status updated",
 
-        res.status(500).json({
+                request_id:
+                    Number(req.params.id),
 
-            success: false,
+                status
+            });
 
-            message:
-                "Failed to fetch resource requests"
+        } catch (error) {
 
-        });
+            console.error(error);
 
-    }
-
-});
-
-// =====================================================
-// UPDATE RESOURCE STATUS
-// =====================================================
-
-app.patch("/api/resources/:id/status", (req, res) => {
-
-    try {
-
-        const { status } = req.body;
-
-        const allowedStatuses = [
-            "Requested",
-            "Assigned",
-            "In Progress",
-            "Delivered",
-            "Completed",
-            "Cancelled"
-        ];
-
-        if (!allowedStatuses.includes(status)) {
-
-            return res.status(400).json({
+            res.status(500).json({
 
                 success: false,
 
                 message:
-                    "Invalid resource request status"
-
+                    "Failed to update resource status"
             });
-
         }
-
-        const result = db.prepare(`
-            UPDATE resource_requests
-            SET status = ?
-            WHERE id = ?
-        `).run(
-            status,
-            req.params.id
-        );
-
-        if (result.changes === 0) {
-
-            return res.status(404).json({
-
-                success: false,
-
-                message:
-                    "Resource request not found"
-
-            });
-
-        }
-
-        res.json({
-
-            success: true,
-
-            message:
-                "Resource request status updated"
-
-        });
-
-    } catch (error) {
-
-        console.error(error);
-
-        res.status(500).json({
-
-            success: false,
-
-            message:
-                "Failed to update resource status"
-
-        });
-
     }
+);
 
-});
 
 // =====================================================
 // SOS
 // =====================================================
 
 // CREATE SOS
+// User can create an SOS without being Admin.
 
 app.post("/api/sos", (req, res) => {
 
@@ -827,15 +1053,14 @@ app.post("/api/sos", (req, res) => {
 
                 message:
                     "District and incident are required"
-
             });
-
         }
 
-        const service = getResponseService(
-            district,
-            incident
-        );
+        const service =
+            getResponseService(
+                district,
+                incident
+            );
 
         const finalTeam =
             response_team || service.team;
@@ -843,7 +1068,7 @@ app.post("/api/sos", (req, res) => {
         const finalPhone =
             response_phone || service.phone;
 
-        const stmt = db.prepare(`
+        const result = db.prepare(`
             INSERT INTO sos_requests (
                 district,
                 incident,
@@ -853,9 +1078,7 @@ app.post("/api/sos", (req, res) => {
                 response_phone
             )
             VALUES (?, ?, ?, ?, ?, ?)
-        `);
-
-        const result = stmt.run(
+        `).run(
 
             district,
 
@@ -872,7 +1095,6 @@ app.post("/api/sos", (req, res) => {
             finalTeam,
 
             finalPhone
-
         );
 
         res.status(201).json({
@@ -890,7 +1112,6 @@ app.post("/api/sos", (req, res) => {
 
             response_phone:
                 finalPhone
-
         });
 
     } catch (error) {
@@ -903,95 +1124,69 @@ app.post("/api/sos", (req, res) => {
 
             message:
                 "Failed to submit SOS"
-
         });
-
     }
-
 });
 
-// =====================================================
-// GET SOS REQUESTS
-// =====================================================
 
-app.get("/api/sos", (req, res) => {
+// ADMIN ONLY
+// GET ALL SOS REQUESTS
 
-    try {
+app.get(
+    "/api/sos",
+    requireAdmin,
+    (req, res) => {
 
-        const requests = db.prepare(`
-            SELECT *
-            FROM sos_requests
-            ORDER BY id DESC
-        `).all();
+        try {
 
-        res.json({
+            const requests =
+                db.prepare(`
+                    SELECT *
+                    FROM sos_requests
+                    ORDER BY id DESC
+                `).all();
 
-            success: true,
+            res.json({
 
-            count: requests.length,
+                success: true,
 
-            requests
+                count:
+                    requests.length,
 
-        });
+                requests
+            });
 
-    } catch (error) {
+        } catch (error) {
 
-        console.error(error);
+            console.error(error);
 
-        res.status(500).json({
-
-            success: false,
-
-            message:
-                "Failed to fetch SOS requests"
-
-        });
-
-    }
-
-});
-
-// =====================================================
-// UPDATE SOS STATUS
-// =====================================================
-
-app.patch("/api/sos/:id/status", (req, res) => {
-
-    try {
-
-        const { status } = req.body;
-
-        const allowedStatuses = [
-            "SOS Active",
-            "Acknowledged",
-            "Responding",
-                       "Resolved",
-            "Cancelled"
-        ];
-
-        if (!allowedStatuses.includes(status)) {
-
-            return res.status(400).json({
+            res.status(500).json({
 
                 success: false,
 
                 message:
-                    "Invalid SOS status"
-
+                    "Failed to fetch SOS requests"
             });
-
         }
+    }
+);
 
-        const result = db.prepare(`
-            UPDATE sos_requests
-            SET status = ?
-            WHERE id = ?
-        `).run(
-            status,
-            req.params.id
-        );
 
-        if (result.changes === 0) {
+// GET SINGLE SOS
+// Used by the user to check their SOS response status.
+
+app.get("/api/sos/:id", (req, res) => {
+
+    try {
+
+        const request =
+            db.prepare(`
+                SELECT *
+                FROM sos_requests
+                WHERE id = ?
+            `).get(req.params.id);
+
+        if (!request) {
 
             return res.status(404).json({
 
@@ -999,18 +1194,12 @@ app.patch("/api/sos/:id/status", (req, res) => {
 
                 message:
                     "SOS request not found"
-
             });
-
         }
 
         res.json({
-
             success: true,
-
-            message:
-                "SOS status updated"
-
+            request
         });
 
     } catch (error) {
@@ -1022,159 +1211,221 @@ app.patch("/api/sos/:id/status", (req, res) => {
             success: false,
 
             message:
-                "Failed to update SOS status"
-
+                "Failed to fetch SOS request"
         });
-
     }
-
 });
 
-// =====================================================
-// DASHBOARD
-// =====================================================
 
-app.get("/api/dashboard", (req, res) => {
+// ADMIN ONLY
+// UPDATE SOS STATUS
 
-    try {
+app.patch(
+    "/api/sos/:id/status",
+    requireAdmin,
+    (req, res) => {
 
-        const totalIncidents = db.prepare(`
-            SELECT COUNT(*) AS count
-            FROM incidents
-        `).get().count;
+        try {
 
-        const activeIncidents = db.prepare(`
-            SELECT COUNT(*) AS count
-            FROM incidents
-            WHERE status != 'Resolved'
-        `).get().count;
+            const {
+                status
+            } = req.body;
 
-        const crisisIncidents = db.prepare(`
-            SELECT COUNT(*) AS count
-            FROM incidents
-            WHERE priority = 'Crisis'
-            AND status != 'Resolved'
-        `).get().count;
+            const allowedStatuses = [
+                "SOS Active",
+                "Acknowledged",
+                "Responding",
+                "Resolved",
+                "Cancelled"
+            ];
 
-        const resourceRequests = db.prepare(`
-            SELECT COUNT(*) AS count
-            FROM resource_requests
-        `).get().count;
+            if (
+                !allowedStatuses.includes(status)
+            ) {
 
-        const pendingResources = db.prepare(`
-            SELECT COUNT(*) AS count
-            FROM resource_requests
-            WHERE status NOT IN ('Completed', 'Cancelled')
-        `).get().count;
+                return res.status(400).json({
 
-        const sosRequests = db.prepare(`
-            SELECT COUNT(*) AS count
-            FROM sos_requests
-        `).get().count;
+                    success: false,
 
-        const activeSOS = db.prepare(`
-            SELECT COUNT(*) AS count
-            FROM sos_requests
-            WHERE status NOT IN ('Resolved', 'Cancelled')
-        `).get().count;
-
-        res.json({
-
-            success: true,
-
-            summary: {
-
-                total_incidents:
-                    totalIncidents,
-
-                active_incidents:
-                    activeIncidents,
-
-                crisis_incidents:
-                    crisisIncidents,
-
-                resource_requests:
-                    resourceRequests,
-
-                pending_resources:
-                    pendingResources,
-
-                sos_requests:
-                    sosRequests,
-
-                active_sos:
-                    activeSOS
-
+                    message:
+                        "Invalid SOS status"
+                });
             }
 
-        });
+            const result =
+                db.prepare(`
+                    UPDATE sos_requests
+                    SET status = ?
+                    WHERE id = ?
+                `).run(
+                    status,
+                    req.params.id
+                );
 
-    } catch (error) {
+            if (result.changes === 0) {
 
-        console.error(error);
+                return res.status(404).json({
 
-        res.status(500).json({
+                    success: false,
 
-            success: false,
+                    message:
+                        "SOS request not found"
+                });
+            }
 
-            message:
-                "Failed to load dashboard"
+            res.json({
 
-        });
+                success: true,
 
+                message:
+                    "SOS status updated",
+
+                sos_id:
+                    Number(req.params.id),
+
+                status
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            res.status(500).json({
+
+                success: false,
+
+                message:
+                    "Failed to update SOS status"
+            });
+        }
     }
+);
 
-});
+
+// =====================================================
+// ADMIN DASHBOARD
+// =====================================================
+
+app.get(
+    "/api/dashboard",
+    requireAdmin,
+    (req, res) => {
+
+        try {
+
+            const totalIncidents =
+                db.prepare(`
+                    SELECT COUNT(*) count
+                    FROM incidents
+                `).get().count;
+
+            const activeIncidents =
+                db.prepare(`
+                    SELECT COUNT(*) count
+                    FROM incidents
+                    WHERE status != 'Resolved'
+                `).get().count;
+
+            const crisisIncidents =
+                db.prepare(`
+                    SELECT COUNT(*) count
+                    FROM incidents
+                    WHERE priority = 'Crisis'
+                    AND status != 'Resolved'
+                `).get().count;
+
+            const resourceRequests =
+                db.prepare(`
+                    SELECT COUNT(*) count
+                    FROM resource_requests
+                `).get().count;
+
+            const pendingResources =
+                db.prepare(`
+                    SELECT COUNT(*) count
+                    FROM resource_requests
+                    WHERE status NOT IN (
+                        'Completed',
+                        'Cancelled'
+                    )
+                `).get().count;
+
+            const sosRequests =
+                db.prepare(`
+                    SELECT COUNT(*) count
+                    FROM sos_requests
+                `).get().count;
+
+            const activeSOS =
+                db.prepare(`
+                    SELECT COUNT(*) count
+                    FROM sos_requests
+                    WHERE status NOT IN (
+                        'Resolved',
+                        'Cancelled'
+                    )
+                `).get().count;
+
+            res.json({
+
+                success: true,
+
+                summary: {
+
+                    total_incidents:
+                        totalIncidents,
+
+                    active_incidents:
+                        activeIncidents,
+
+                    crisis_incidents:
+                        crisisIncidents,
+
+                    resource_requests:
+                        resourceRequests,
+
+                    pending_resources:
+                        pendingResources,
+
+                    sos_requests:
+                        sosRequests,
+
+                    active_sos:
+                        activeSOS
+                }
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            res.status(500).json({
+
+                success: false,
+
+                message:
+                    "Failed to load dashboard"
+            });
+        }
+    }
+);
+
+
 // =====================================================
 // REGISTERED RESCUE TEAMS
 // =====================================================
 
-// REGISTER A RESCUE TEAM
+// ADMIN ONLY
+// REGISTER RESCUE TEAM
 
-app.post("/api/rescue-teams", (req, res) => {
+app.post(
+    "/api/rescue-teams",
+    requireAdmin,
+    (req, res) => {
 
-    try {
+        try {
 
-        const {
-            team_name,
-            district,
-            service_types,
-            phone,
-            latitude,
-            longitude,
-            availability
-        } = req.body;
-
-        if (
-            !team_name ||
-            !district ||
-            !service_types ||
-            !phone
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Team name, district, service types and phone are required"
-            });
-        }
-
-        const services = Array.isArray(service_types)
-            ? service_types
-            : [service_types];
-
-        const allowedAvailability = [
-            "Available",
-            "Busy",
-            "Offline"
-        ];
-
-        const finalAvailability =
-            allowedAvailability.includes(availability)
-                ? availability
-                : "Available";
-
-        const stmt = db.prepare(`
-            INSERT INTO rescue_teams (
+            const {
                 team_name,
                 district,
                 service_types,
@@ -1182,232 +1433,356 @@ app.post("/api/rescue-teams", (req, res) => {
                 latitude,
                 longitude,
                 availability
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `);
+            } = req.body;
 
-        const result = stmt.run(
-            team_name,
-            district,
-            JSON.stringify(services),
-            phone,
-            latitude !== undefined ? latitude : null,
-            longitude !== undefined ? longitude : null,
-            finalAvailability
-        );
+            if (
+                !team_name ||
+                !district ||
+                !service_types ||
+                !phone
+            ) {
 
-        res.status(201).json({
-            success: true,
-            message: "Rescue team registered successfully",
-            team_id: result.lastInsertRowid
-        });
+                return res.status(400).json({
 
-    } catch (error) {
+                    success: false,
 
-        console.error(error);
+                    message:
+                        "Team name, district, service types and phone are required"
+                });
+            }
 
-        res.status(500).json({
-            success: false,
-            message: "Failed to register rescue team"
-        });
+            const services =
+                Array.isArray(service_types)
+                    ? service_types
+                    : [service_types];
 
+            const allowedAvailability = [
+                "Available",
+                "Busy",
+                "Offline"
+            ];
+
+            const finalAvailability =
+                allowedAvailability.includes(
+                    availability
+                )
+                    ? availability
+                    : "Available";
+
+            const result = db.prepare(`
+                INSERT INTO rescue_teams (
+                    team_name,
+                    district,
+                    service_types,
+                    phone,
+                    latitude,
+                    longitude,
+                    availability
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            `).run(
+
+                team_name,
+
+                district,
+
+                JSON.stringify(services),
+
+                phone,
+
+                latitude !== undefined
+                    ? latitude
+                    : null,
+
+                longitude !== undefined
+                    ? longitude
+                    : null,
+
+                finalAvailability
+            );
+
+            res.status(201).json({
+
+                success: true,
+
+                message:
+                    "Rescue team registered successfully",
+
+                team_id:
+                    result.lastInsertRowid
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            res.status(500).json({
+
+                success: false,
+
+                message:
+                    "Failed to register rescue team"
+            });
+        }
     }
-
-});
+);
 
 
 // GET REGISTERED RESCUE TEAMS
+// Kept public for nearby-help functionality.
 
-app.get("/api/rescue-teams", (req, res) => {
+app.get(
+    "/api/rescue-teams",
+    (req, res) => {
 
-    try {
+        try {
 
-        const {
-            district,
-            incident,
-            availability
-        } = req.query;
+            const {
+                district,
+                incident,
+                availability
+            } = req.query;
 
-        let teams = db.prepare(`
-            SELECT *
-            FROM rescue_teams
-            ORDER BY id DESC
-        `).all();
+            let teams =
+                db.prepare(`
+                    SELECT *
+                    FROM rescue_teams
+                    ORDER BY id DESC
+                `).all();
 
-        teams = teams.filter(team => {
+            teams = teams.filter(
+                team => {
 
-            if (
-                district &&
-                team.district.toLowerCase() !==
-                district.toLowerCase()
-            ) {
-                return false;
-            }
+                    if (
+                        district &&
+                        team.district.toLowerCase() !==
+                        district.toLowerCase()
+                    ) {
+                        return false;
+                    }
 
-            if (
-                availability &&
-                team.availability !== availability
-            ) {
-                return false;
-            }
+                    if (
+                        availability &&
+                        team.availability !==
+                        availability
+                    ) {
+                        return false;
+                    }
 
-            if (incident) {
+                    if (incident) {
 
-                let services = [];
+                        let services = [];
 
-                try {
-                    services = JSON.parse(team.service_types);
-                } catch {
-                    services = [];
+                        try {
+
+                            services =
+                                JSON.parse(
+                                    team.service_types
+                                );
+
+                        } catch {
+                            services = [];
+                        }
+
+                        const handlesIncident =
+                            services.some(
+                                service =>
+                                    String(service)
+                                        .toLowerCase() ===
+                                    String(incident)
+                                        .toLowerCase()
+                            );
+
+                        if (!handlesIncident) {
+                            return false;
+                        }
+                    }
+
+                    return true;
                 }
+            );
 
-                const handlesIncident = services.some(
-                    service =>
-                        String(service).toLowerCase() ===
-                        String(incident).toLowerCase()
-                );
+            teams.forEach(
+                team => {
 
-                if (!handlesIncident) {
-                    return false;
+                    try {
+
+                        team.service_types =
+                            JSON.parse(
+                                team.service_types
+                            );
+
+                    } catch {
+
+                        team.service_types = [];
+                    }
                 }
-            }
+            );
 
-            return true;
-        });
+            res.json({
 
-        teams.forEach(team => {
+                success: true,
 
-            try {
-                team.service_types =
-                    JSON.parse(team.service_types);
-            } catch {
-                team.service_types = [];
-            }
+                count:
+                    teams.length,
 
-        });
+                teams
+            });
 
-        res.json({
-            success: true,
-            count: teams.length,
-            teams
-        });
+        } catch (error) {
 
-    } catch (error) {
+            console.error(error);
 
-        console.error(error);
+            res.status(500).json({
 
-        res.status(500).json({
-            success: false,
-            message: "Failed to fetch rescue teams"
-        });
+                success: false,
 
+                message:
+                    "Failed to fetch rescue teams"
+            });
+        }
     }
+);
 
-});
 
-
+// ADMIN ONLY
 // UPDATE RESCUE TEAM AVAILABILITY
 
-app.patch("/api/rescue-teams/:id/status", (req, res) => {
+app.patch(
+    "/api/rescue-teams/:id/status",
+    requireAdmin,
+    (req, res) => {
 
-    try {
+        try {
 
-        const { availability } = req.body;
+            const {
+                availability
+            } = req.body;
 
-        const allowedAvailability = [
-            "Available",
-            "Busy",
-            "Offline"
-        ];
+            const allowedAvailability = [
+                "Available",
+                "Busy",
+                "Offline"
+            ];
 
-        if (!allowedAvailability.includes(availability)) {
+            if (
+                !allowedAvailability.includes(
+                    availability
+                )
+            ) {
 
-            return res.status(400).json({
-                success: false,
+                return res.status(400).json({
+
+                    success: false,
+
+                    message:
+                        "Invalid availability. Use Available, Busy or Offline."
+                });
+            }
+
+            const result =
+                db.prepare(`
+                    UPDATE rescue_teams
+                    SET availability = ?
+                    WHERE id = ?
+                `).run(
+                    availability,
+                    req.params.id
+                );
+
+            if (result.changes === 0) {
+
+                return res.status(404).json({
+
+                    success: false,
+
+                    message:
+                        "Rescue team not found"
+                });
+            }
+
+            res.json({
+
+                success: true,
+
                 message:
-                    "Invalid availability. Use Available, Busy or Offline."
+                    "Rescue team availability updated",
+
+                team_id:
+                    Number(req.params.id),
+
+                availability
             });
 
-        }
+        } catch (error) {
 
-        const result = db.prepare(`
-            UPDATE rescue_teams
-            SET availability = ?
-            WHERE id = ?
-        `).run(
-            availability,
-            req.params.id
-        );
+            console.error(error);
 
-        if (result.changes === 0) {
+            res.status(500).json({
 
-            return res.status(404).json({
                 success: false,
-                message: "Rescue team not found"
+
+                message:
+                    "Failed to update rescue team availability"
             });
-
         }
-
-        res.json({
-            success: true,
-            message: "Rescue team availability updated",
-            team_id: Number(req.params.id),
-            availability
-        });
-
-    } catch (error) {
-
-        console.error(error);
-
-        res.status(500).json({
-            success: false,
-            message:
-                "Failed to update rescue team availability"
-        });
-
     }
+);
 
-});
 
-
+// ADMIN ONLY
 // DELETE RESCUE TEAM
 
-app.delete("/api/rescue-teams/:id", (req, res) => {
+app.delete(
+    "/api/rescue-teams/:id",
+    requireAdmin,
+    (req, res) => {
 
-    try {
+        try {
 
-        const result = db.prepare(`
-            DELETE FROM rescue_teams
-            WHERE id = ?
-        `).run(req.params.id);
+            const result =
+                db.prepare(`
+                    DELETE FROM rescue_teams
+                    WHERE id = ?
+                `).run(req.params.id);
 
-        if (result.changes === 0) {
+            if (result.changes === 0) {
 
-            return res.status(404).json({
-                success: false,
-                message: "Rescue team not found"
+                return res.status(404).json({
+
+                    success: false,
+
+                    message:
+                        "Rescue team not found"
+                });
+            }
+
+            res.json({
+
+                success: true,
+
+                message:
+                    "Rescue team deleted successfully",
+
+                team_id:
+                    Number(req.params.id)
             });
 
+        } catch (error) {
+
+            console.error(error);
+
+            res.status(500).json({
+
+                success: false,
+
+                message:
+                    "Failed to delete rescue team"
+            });
         }
-
-        res.json({
-            success: true,
-            message: "Rescue team deleted successfully",
-            team_id: Number(req.params.id)
-        });
-
-    } catch (error) {
-
-        console.error(error);
-
-        res.status(500).json({
-            success: false,
-            message: "Failed to delete rescue team"
-        });
-
     }
+);
 
-});
 
 // =====================================================
 // 404 HANDLER
@@ -1424,43 +1799,73 @@ app.use((req, res) => {
 
         path:
             req.originalUrl
-
     });
-
 });
+
 
 // =====================================================
 // ERROR HANDLER
 // =====================================================
 
-app.use((error, req, res, next) => {
+app.use(
+    (error, req, res, next) => {
 
-    console.error(error);
+        console.error(error);
 
-    res.status(500).json({
+        res.status(500).json({
 
-        success: false,
+            success: false,
 
-        message:
-            "Internal server error"
+            message:
+                "Internal server error"
+        });
+    }
+);
 
-    });
-
-});
 
 // =====================================================
 // START SERVER
 // =====================================================
 
-app.listen(PORT, "0.0.0.0", () => {
-    console.log("");
-    console.log("======================================");
-    console.log("       CRISISLINK BACKEND");
-    console.log("======================================");
-    console.log(`Server running on: http://localhost:${PORT}`);
-    console.log("Database: SQLite");
-    console.log("Version: 1.2.0");
-    console.log("======================================");
-    console.log("");
+app.listen(
+    PORT,
+    "0.0.0.0",
+    () => {
 
-});
+        console.log(
+            "======================================"
+        );
+
+        console.log(
+            "       CRISISLINK BACKEND"
+        );
+
+        console.log(
+            "======================================"
+        );
+
+        console.log(
+            `Server running on: http://localhost:${PORT}`
+        );
+
+        console.log(
+            "Database: SQLite"
+        );
+
+        console.log(
+            "Authentication: JWT + bcrypt"
+        );
+
+        console.log(
+            "Admin login endpoint: /api/auth/admin/login"
+        );
+
+        console.log(
+            "Version: 1.3.0"
+        );
+
+        console.log(
+            "======================================"
+        );
+    }
+);
