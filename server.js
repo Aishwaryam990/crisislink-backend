@@ -3,6 +3,7 @@ const cors = require("cors");
 const Database = require("better-sqlite3");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -89,6 +90,19 @@ CREATE TABLE IF NOT EXISTS admins (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 `);
+
+// Add a secure status token for SOS requests.
+// Existing SOS records remain unchanged.
+try {
+    db.exec(`
+        ALTER TABLE sos_requests
+        ADD COLUMN status_token TEXT
+    `);
+} catch (error) {
+    if (!String(error.message).includes("duplicate column name")) {
+        throw error;
+    }
+}
 
 
 // =====================================================
@@ -1068,34 +1082,29 @@ app.post("/api/sos", (req, res) => {
         const finalPhone =
             response_phone || service.phone;
 
-        const result = db.prepare(`
-            INSERT INTO sos_requests (
-                district,
-                incident,
-                latitude,
-                longitude,
-                response_team,
-                response_phone
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-        `).run(
+        // Generate a secure token for checking this SOS status.
+const statusToken = crypto.randomBytes(32).toString("hex");
 
-            district,
-
-            incident,
-
-            latitude !== undefined
-                ? latitude
-                : null,
-
-            longitude !== undefined
-                ? longitude
-                : null,
-
-            finalTeam,
-
-            finalPhone
-        );
+const result = db.prepare(`
+    INSERT INTO sos_requests (
+        district,
+        incident,
+        latitude,
+        longitude,
+        response_team,
+        response_phone,
+        status_token
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+`).run(
+    district,
+    incident,
+    latitude !== undefined ? latitude : null,
+    longitude !== undefined ? longitude : null,
+    finalTeam,
+    finalPhone,
+    statusToken
+);
 
         res.status(201).json({
 
@@ -1106,6 +1115,7 @@ app.post("/api/sos", (req, res) => {
 
             sos_id:
                 result.lastInsertRowid,
+                status_token: statusToken,
 
             response_team:
                 finalTeam,
@@ -1175,43 +1185,76 @@ app.get(
 // GET SINGLE SOS
 // Used by the user to check their SOS response status.
 
-app.get("/api/sos/:id", (req, res) => {
-
+// Get an individual SOS request.
+// Admins can access any SOS; users must be verified separately.
+app.get("/api/sos/:id", requireAdmin, (req, res) => {
     try {
-
-        const request =
-            db.prepare(`
-                SELECT *
-                FROM sos_requests
-                WHERE id = ?
-            `).get(req.params.id);
+        const request = db.prepare(`
+            SELECT *
+            FROM sos_requests
+            WHERE id = ?
+        `).get(req.params.id);
 
         if (!request) {
-
             return res.status(404).json({
-
                 success: false,
-
-                message:
-                    "SOS request not found"
+                message: "SOS request not found"
             });
         }
 
-        res.json({
+        return res.json({
             success: true,
             request
         });
 
     } catch (error) {
+        console.error("Failed to fetch SOS request:", error);
 
-        console.error(error);
-
-        res.status(500).json({
-
+        return res.status(500).json({
             success: false,
+            message: "Failed to fetch SOS request"
+        });
+    }
+});
 
-            message:
-                "Failed to fetch SOS request"
+// Allow a user to check their own SOS status using their secret token.
+app.get("/api/sos/:id/status", (req, res) => {
+    try {
+        const sosId = req.params.id;
+        const statusToken = req.get("X-SOS-Status-Token");
+
+        if (!/^\d+$/.test(sosId) || !statusToken) {
+            return res.status(401).json({
+                success: false,
+                message: "Valid SOS ID and status token are required."
+            });
+        }
+
+        const request = db.prepare(`
+            SELECT id, status
+            FROM sos_requests
+            WHERE id = ? AND status_token = ?
+        `).get(sosId, statusToken);
+
+        if (!request) {
+            return res.status(404).json({
+                success: false,
+                message: "SOS request not found or access denied."
+            });
+        }
+
+        return res.json({
+            success: true,
+            sos_id: request.id,
+            status: request.status || "SOS Active"
+        });
+
+    } catch (error) {
+        console.error("SOS status lookup failed:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Unable to retrieve SOS status."
         });
     }
 });

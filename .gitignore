@@ -3,3 +3,6 @@ crisislink.db
 crisislink.db-shm
 crisislink.db-wal
 .env
+blood/blood.db
+blood/blood.db-shm
+blood/blood.db-wal
