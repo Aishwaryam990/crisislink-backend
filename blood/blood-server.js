@@ -4,6 +4,120 @@ const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
 
+// Online blood-centre directory.
+// Directory listings do not imply confirmed blood-stock availability.
+const BLOOD_CENTRE_DIRECTORY = [
+    {
+        provider_name: "Sri Chamarajendra District Hospital Blood Bank",
+        provider_type: "Blood Centre",
+        district: "Hassan",
+        address: "Hassan Institute of Medical Sciences, Hospital Road, Hassan",
+        phone: "",
+        availability: null,
+        directoryOnly: true,
+        source: "Karnataka State Disaster Management Authority district plan"
+    },
+    {
+        provider_name: "Jeeva Raksha Blood Bank",
+        provider_type: "Blood Centre",
+        district: "Hassan",
+        address: "Vokkaligara Hostel Building, Shankara Mutt Road, Hassan",
+        phone: "",
+        availability: null,
+        directoryOnly: true,
+        source: "Published Karnataka blood-bank directory"
+    },
+    {
+        provider_name: "Hassan Blood Bank",
+        provider_type: "Blood Centre",
+        district: "Hassan",
+        address: "4th Cross, Shankara Mutt Road, opposite Vijaya English School, K. R. Puram, Hassan",
+        phone: "",
+        availability: null,
+        directoryOnly: true,
+        source: "Karnataka State Disaster Management Authority district plan"
+    },
+    {
+        provider_name: "J.S.S. Hospital Blood Bank",
+        provider_type: "Blood Centre",
+        district: "Mysuru",
+        address: "Mahatma Gandhi Road, Mysuru, Karnataka",
+        phone: "",
+        availability: null,
+        directoryOnly: true,
+        source: "Published Karnataka blood-bank directory"
+    },
+    {
+        provider_name: "K. R. Hospital Blood Bank",
+        provider_type: "Blood Centre",
+        district: "Mysuru",
+        address: "MMC & RI, Sayaji Rao Road, Mysuru, Karnataka",
+        phone: "",
+        availability: null,
+        directoryOnly: true,
+        source: "Published Karnataka blood-bank directory"
+    },
+    {
+        provider_name: "B.G.S. Apollo Hospital Blood Bank",
+        provider_type: "Blood Centre",
+        district: "Mysuru",
+        address: "Kantharaj Urs Road, Kuvempunagar, Mysuru, Karnataka",
+        phone: "",
+        availability: null,
+        directoryOnly: true,
+        source: "Published Karnataka blood-bank directory"
+    },
+    {
+        provider_name: "Rotary Mysore Chandrakala Hospital Blood Bank",
+        provider_type: "Blood Centre",
+        district: "Mysuru",
+        address: "Plot A, Kalidasa Road, Jayalakshmipuram, Mysuru, Karnataka",
+        phone: "",
+        availability: null,
+        directoryOnly: true,
+        source: "Published Karnataka blood-bank directory"
+    },
+    {
+        provider_name: "Holdsworth Memorial Mission Hospital Blood Bank",
+        provider_type: "Blood Centre",
+        district: "Mysuru",
+        address: "Mandi Mohalla, Mysuru, Karnataka",
+        phone: "",
+        availability: null,
+        directoryOnly: true,
+        source: "Published Karnataka blood-bank directory"
+    },
+    {
+        provider_name: "Sri Jayadeva Institute of Cardiovascular Sciences and Research Blood Bank",
+        provider_type: "Blood Centre",
+        district: "Mysuru",
+        address: "Kumbarakoppal, Gokulam 3rd Stage, Mysuru, Karnataka",
+        phone: "",
+        availability: null,
+        directoryOnly: true,
+        source: "Published Karnataka blood-bank directory"
+    },
+    {
+        provider_name: "Narayana Hrudayalaya Surgical Hospital",
+        provider_type: "Blood Centre",
+        district: "Mysuru",
+        address: "CAH-1, 3rd Phase, Devanur, Mysuru, Karnataka",
+        phone: "",
+        availability: null,
+        directoryOnly: true,
+        source: "Published Karnataka blood-bank directory"
+    },
+    {
+        provider_name: "Navjeevan Medical Relief and Research Foundation, St. Joseph's Hospital Blood Bank",
+        provider_type: "Blood Centre",
+        district: "Mysuru",
+        address: "Bannimantap, St. Joseph's Hospital, Mysuru, Karnataka",
+        phone: "",
+        availability: null,
+        directoryOnly: true,
+        source: "Published Karnataka blood-bank directory"
+    }
+];
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -1399,9 +1513,45 @@ app.patch("/api/blood/requests/:id/status", (req, res) => {
 });
 
 
+
 // =====================================================
 // START SERVER
 // =====================================================
+
+// Public blood-centre directory.
+// Directory listings do not confirm current blood-stock availability.
+app.get("/api/blood/directory", (req, res) => {
+    try {
+        const requestedDistrict = String(req.query.district || "")
+            .trim()
+            .toLowerCase();
+
+        if (!requestedDistrict) {
+            return res.status(400).json({
+                success: false,
+                message: "Please provide a district."
+            });
+        }
+
+        const providers = BLOOD_CENTRE_DIRECTORY.filter(centre =>
+            centre.district.toLowerCase() === requestedDistrict
+        );
+
+        return res.json({
+            success: true,
+            district: req.query.district,
+            count: providers.length,
+            providers
+        });
+    } catch (error) {
+        console.error("Blood directory error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Unable to load the blood-centre directory."
+        });
+    }
+});
 
 app.listen(PORT, () => {
 
