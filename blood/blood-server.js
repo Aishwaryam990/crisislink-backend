@@ -12,7 +12,7 @@ const BLOOD_CENTRE_DIRECTORY = [
         provider_type: "Blood Centre",
         district: "Hassan",
         address: "Hassan Institute of Medical Sciences, Hospital Road, Hassan",
-        phone: "",
+        phone: "08172233677",
         availability: null,
         directoryOnly: true,
         source: "Karnataka State Disaster Management Authority district plan"
@@ -22,7 +22,7 @@ const BLOOD_CENTRE_DIRECTORY = [
         provider_type: "Blood Centre",
         district: "Hassan",
         address: "Vokkaligara Hostel Building, Shankara Mutt Road, Hassan",
-        phone: "",
+        phone: "08172262047",
         availability: null,
         directoryOnly: true,
         source: "Published Karnataka blood-bank directory"
@@ -32,7 +32,7 @@ const BLOOD_CENTRE_DIRECTORY = [
         provider_type: "Blood Centre",
         district: "Hassan",
         address: "4th Cross, Shankara Mutt Road, opposite Vijaya English School, K. R. Puram, Hassan",
-        phone: "",
+        phone: "08172266124",
         availability: null,
         directoryOnly: true,
         source: "Karnataka State Disaster Management Authority district plan"
@@ -42,7 +42,7 @@ const BLOOD_CENTRE_DIRECTORY = [
         provider_type: "Blood Centre",
         district: "Mysuru",
         address: "Mahatma Gandhi Road, Mysuru, Karnataka",
-        phone: "",
+        phone: "08212335009",
         availability: null,
         directoryOnly: true,
         source: "Published Karnataka blood-bank directory"
@@ -52,7 +52,7 @@ const BLOOD_CENTRE_DIRECTORY = [
         provider_type: "Blood Centre",
         district: "Mysuru",
         address: "MMC & RI, Sayaji Rao Road, Mysuru, Karnataka",
-        phone: "",
+        phone: "08212429800",
         availability: null,
         directoryOnly: true,
         source: "Published Karnataka blood-bank directory"
@@ -62,7 +62,7 @@ const BLOOD_CENTRE_DIRECTORY = [
         provider_type: "Blood Centre",
         district: "Mysuru",
         address: "Kantharaj Urs Road, Kuvempunagar, Mysuru, Karnataka",
-        phone: "",
+        phone: "08212566666",
         availability: null,
         directoryOnly: true,
         source: "Published Karnataka blood-bank directory"
@@ -72,7 +72,7 @@ const BLOOD_CENTRE_DIRECTORY = [
         provider_type: "Blood Centre",
         district: "Mysuru",
         address: "Plot A, Kalidasa Road, Jayalakshmipuram, Mysuru, Karnataka",
-        phone: "",
+        phone: "08214288638",
         availability: null,
         directoryOnly: true,
         source: "Published Karnataka blood-bank directory"
@@ -82,7 +82,7 @@ const BLOOD_CENTRE_DIRECTORY = [
         provider_type: "Blood Centre",
         district: "Mysuru",
         address: "Mandi Mohalla, Mysuru, Karnataka",
-        phone: "",
+        phone: "08212521650",
         availability: null,
         directoryOnly: true,
         source: "Published Karnataka blood-bank directory"
@@ -92,7 +92,7 @@ const BLOOD_CENTRE_DIRECTORY = [
         provider_type: "Blood Centre",
         district: "Mysuru",
         address: "Kumbarakoppal, Gokulam 3rd Stage, Mysuru, Karnataka",
-        phone: "",
+        phone: "7411331290",
         availability: null,
         directoryOnly: true,
         source: "Published Karnataka blood-bank directory"
@@ -102,7 +102,7 @@ const BLOOD_CENTRE_DIRECTORY = [
         provider_type: "Blood Centre",
         district: "Mysuru",
         address: "CAH-1, 3rd Phase, Devanur, Mysuru, Karnataka",
-        phone: "",
+        phone: "08217122222",
         availability: null,
         directoryOnly: true,
         source: "Published Karnataka blood-bank directory"
@@ -112,7 +112,7 @@ const BLOOD_CENTRE_DIRECTORY = [
         provider_type: "Blood Centre",
         district: "Mysuru",
         address: "Bannimantap, St. Joseph's Hospital, Mysuru, Karnataka",
-        phone: "",
+        phone: "9945636880",
         availability: null,
         directoryOnly: true,
         source: "Published Karnataka blood-bank directory"
